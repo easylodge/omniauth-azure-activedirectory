@@ -45,10 +45,9 @@ module OmniAuth
       #      provider :azure_activedirectory, ENV['AAD_KEY'], ENV['AAD_TENANT']
       #    end
       #
-      args [:client_id, :tenant, :multi_tenant]
+      args [:client_id, :tenant]
       option :client_id, nil
       option :tenant, nil
-      option :multi_tenant, false
 
       # Field renaming is an attempt to fit the OmniAuth recommended schema as
       # best as possible.
@@ -103,16 +102,17 @@ module OmniAuth
       #
       # @return String
       def authorize_endpoint_url
-        if !options.multi_tenant
-          uri = URI(openid_config['authorization_endpoint'])
-        else
-          uri = URI("https://login.windows.net/common/oauth2/authorize")
-        end
-        uri.query = URI.encode_www_form(client_id: client_id,
-                                        redirect_uri: callback_url,
-                                        response_mode: response_mode,
-                                        response_type: response_type,
-                                        nonce: new_nonce)
+        uri = URI(openid_config['authorization_endpoint'])
+        uri = URI("https://login.microsoftonline.com/common/oauth2/v2.0/authorize") if multi_tenant?
+        query_params = { client_id: client_id,
+                         redirect_uri: callback_url,
+                         response_mode: response_mode,
+                         response_type: response_type,
+                         nonce: new_nonce }
+
+        query_params.merge!(scope: 'openid email profile user.read') if multi_tenant?
+
+        uri.query = URI.encode_www_form(query_params)
         uri.to_s
       end
 
@@ -132,6 +132,10 @@ module OmniAuth
       # @return String
       def issuer
         openid_config['issuer']
+      end
+
+      def multi_tenant?
+        tenant == 'common'
       end
 
       ##
@@ -275,23 +279,30 @@ module OmniAuth
         #
         # If you're thinking that this looks ugly with the raw nil and boolean,
         # see https://github.com/jwt/ruby-jwt/issues/59.
-        jwt_claims, jwt_header =
-          JWT.decode(id_token, nil, true, verify_options) do |header|
-            # There should always be one key from the discovery endpoint that
-            # matches the id in the JWT header.
-            x5c = (signing_keys.find do |key|
-              key['kid'] == header['kid']
-            end || {})['x5c']
-            if x5c.nil? || x5c.empty?
-              fail JWT::VerificationError,
-                   'No keys from key endpoint match the id token'
-            end
-            # The key also contains other fields, such as n and e, that are
-            # redundant. x5c is sufficient to verify the id token.
-            OpenSSL::X509::Certificate.new(JWT.base64url_decode(x5c.first)).public_key
-          end
+        jwt_claims, jwt_header = if multi_tenant?
+                                   JWT.decode(id_token, nil, false)
+                                 else
+                                   decode_id_token(id_token)
+                                 end
+
         return jwt_claims, jwt_header if jwt_claims['nonce'] == read_nonce
         fail JWT::DecodeError, 'Returned nonce did not match.'
+      end
+
+      def decode_id_token(id_token)
+        JWT.decode(id_token, nil, true, verify_options) do |header|
+          # There should always be one key from the discovery endpoint that
+          # matches the id in the JWT header.
+          x5c = (signing_keys.find do |key|
+            key['kid'] == header['kid']
+          end || {})['x5c']
+          if x5c.nil? || x5c.empty?
+            fail JWT::VerificationError, 'No keys from key endpoint match the id token'
+          end
+          # The key also contains other fields, such as n and e, that are
+          # redundant. x5c is sufficient to verify the id token.
+          OpenSSL::X509::Certificate.new(JWT.base64url_decode(x5c.first)).public_key
+        end
       end
 
       ##
@@ -307,8 +318,7 @@ module OmniAuth
         full_hash = OpenSSL::Digest.new(algorithm).digest code
         c_hash = JWT.base64url_encode full_hash[0..full_hash.length / 2 - 1]
         return if c_hash == claims['c_hash']
-        fail JWT::VerificationError,
-             'c_hash in id token does not match auth code.'
+        fail JWT::VerificationError, 'c_hash in id token does not match auth code.'
       end
 
       ##
@@ -319,14 +329,13 @@ module OmniAuth
       #
       # @return Hash
       def verify_options
-        opt_hash = { verify_expiration: true,
+        { verify_expiration: true,
           verify_not_before: true,
           verify_iat: true,
           verify_iss: true,
           verify_aud: true,
-          'aud' => client_id}
-          opt_hash.merge!('iss' => issuer) unless options.multi_tenant
-          return opt_hash
+          'aud' => client_id,
+          'iss' => issuer }
       end
     end
   end
