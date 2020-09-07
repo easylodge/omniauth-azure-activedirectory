@@ -122,6 +122,7 @@ module OmniAuth
       #
       # @return String
       def client_id
+        return tenant_provider.client_id if tenant_provider
         return options.client_id if options.client_id
         fail StandardError, 'No client_id specified in AzureAD configuration.'
       end
@@ -261,8 +262,13 @@ module OmniAuth
       #
       # @return String
       def tenant
+        return tenant_provider.tenant if tenant_provider
         return options.tenant if options.tenant
         fail StandardError, 'No tenant specified in AzureAD configuration.'
+      end
+
+      def tenant_provider
+        options[:tenant_provider].new(self) if options[:tenant_provider]
       end
 
       ##
