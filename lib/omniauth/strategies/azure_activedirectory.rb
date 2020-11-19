@@ -294,23 +294,7 @@ module OmniAuth
         # If you're thinking that this looks ugly with the raw nil and boolean,
         # see https://github.com/jwt/ruby-jwt/issues/59.
 
-        # if multi_tenant?
         jwt_claims, jwt_header = JWT.decode(id_token, nil, false)
-        # else
-        #   jwt_claims, jwt_header = JWT.decode(id_token, nil, true, verify_options) do |header|
-        #     # There should always be one key from the discovery endpoint that
-        #     # matches the id in the JWT header.
-        #     x5c = (signing_keys.find do |key|
-        #       key['kid'] == header['kid']
-        #     end || {})['x5c']
-        #     if x5c.nil? || x5c.empty?
-        #       fail JWT::VerificationError, 'No keys from key endpoint match the id token'
-        #     end
-        #     # The key also contains other fields, such as n and e, that are
-        #     # redundant. x5c is sufficient to verify the id token.
-        #     OpenSSL::X509::Certificate.new(JWT.base64url_decode(x5c.first)).public_key
-        #   end
-        # end
 
         return jwt_claims, jwt_header if jwt_claims['nonce'] == read_nonce
         fail JWT::DecodeError, 'Returned nonce did not match.'
